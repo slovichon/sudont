@@ -1,8 +1,10 @@
 #!/usr/bin/perl -W
+# $Id$
 
 use File::Copy;
 use IO::Handle;
 use strict;
+use warnings;
 
 use constant GR_NAME 	=> 0;
 use constant GR_MEMBERS	=> 3;
@@ -16,18 +18,40 @@ my @groups = ();
 my $sudoersf = DEF_SUDOERS;
 my $tmpath = DEF_TMPATH;
 
+sub gettmpfile {
+	my $filename;
+	do {
+		$filename = sprintf "%s/sudoff.%08d", $tmpath, int rand 1e8;
+	} while (-f $filename);
+	return $filename;
+}
+
+sub gettmpfh {
+	my ($filename) = @_;
+	local *FH;
+	chmod 0600, $filename;
+	open FH, "> $filename";
+	return *FH{HANDLE};
+}
+
+sub in_array {
+	my ($elem, $arr) = @_;
+	for (@$arr) {
+		return 1 if $elem eq $_;
+	}
+	return 0;
+}
+
 # Gather group list
 {
 	my (@group, @members, $group);
-	while (@group = getgrent)
-	{
+	while (@group = getgrent) {
 		@members = split /\s+/, $group[GR_MEMBERS];
 		push @groups, $group[GR_NAME] if in_array($username, \@members);
 	}
 	endpwent;
 
-	foreach $group (@groups)
-	{
+	foreach $group (@groups) {
 		# Groups in crontab are prepended with `%'
 		$group = "%$group";
 	}
@@ -40,8 +64,7 @@ my $tmpfh = gettmpfh($tmpf);
 
 # Check users and groups for auth line
 open SUDOERS, "< $sudoersf";
-while (defined($line = <SUDOERS>))
-{
+while (defined($line = <SUDOERS>)) {
 	# We want to match a line that looks like this:
 	# 	%<group> ALL=(ALL) NOPASSWD: ALL
 	# or
@@ -53,8 +76,7 @@ while (defined($line = <SUDOERS>))
 			\s+ NOPASSWD	# Followed by no password modifier
 			\s* : \s* ALL	# For all commands
 			\s* (?: # .* )	# Optional comment
-			$}x)		# EOL
-	{
+			$}x) {		# EOL
 		# Comment out line
 		$line = "# $line";
 	}
@@ -63,39 +85,10 @@ while (defined($line = <SUDOERS>))
 close SUDOERS;
 close $tmpfh;
 
-if ($changed)
-{
+if ($changed) {
 	# If we were successful, replace sudoers
 	copy($tmpf, $sudoersf);
 	unlink($tmpf);
-}
-
-sub gettmpfile
-{
-	my $filename;
-	do {
-		$filename = sprintf "%s/sudoff.%08d", $tmpath, int rand 1e8;
-	} while (-f $filename);
-	return $filename;
-}
-
-sub gettmpfh
-{
-	my ($filename) = @_;
-	local *FH;
-	chmod 0600, $filename;
-	open FH, "> $filename";
-	return *FH{HANDLE};
-}
-
-sub in_array
-{
-	my ($elem, $arr) = @_;
-	for (@$arr)
-	{
-		return 1 if $elem eq $_;
-	}
-	return 0;
 }
 
 exit 0;
