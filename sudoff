@@ -1,0 +1,101 @@
+#!/usr/bin/perl -W
+
+use File::Copy;
+use IO::Handle;
+use strict;
+
+use constant GR_NAME 	=> 0;
+use constant GR_MEMBERS	=> 3;
+
+use constant DEF_TMPATH => "/tmp";
+use constant DEF_SUDOERS => "/etc/sudoers";
+
+my $username = (getpwuid($<))[0];
+my ($line);
+my @groups = ();
+my $sudoersf = DEF_SUDOERS;
+my $tmpath = DEF_TMPATH;
+
+# Gather group list
+{
+	my (@group, @members, $group);
+	while (@group = getgrent)
+	{
+		@members = split /\s+/, $group[GR_MEMBERS];
+		push @groups, $group[GR_NAME] if in_array($username, \@members);
+	}
+	endpwent;
+
+	foreach $group (@groups)
+	{
+		# Groups in crontab are prepended with `%'
+		$group = "%$group";
+	}
+}
+
+my $usersgroups = join '|', $username, @groups;
+my $changed = 0;
+my $tmpf = gettmpfile();
+my $tmpfh = gettmpfh($tmpf);
+
+# Check users and groups for auth line
+open SUDOERS, "< $sudoersf";
+while (defined($line = <SUDOERS>))
+{
+	# We want to match a line that looks like this:
+	# 	%<group> ALL=(ALL) NOPASSWD: ALL
+	# or
+	#	<user> ALL=(ALL) NOPASSWD: ALL
+	if ($line =~ m{ ^ $usersgroups	# Match our users and groups at the beginning
+			\s+ ALL \s* =	# Followed by whitespace and ALL spec
+			\s* \( \s*	# Followed by ALL def
+			ALL \s* \)
+			\s+ NOPASSWD	# Followed by no password modifier
+			\s* : \s* ALL	# For all commands
+			\s* (?: # .* )	# Optional comment
+			$}x)		# EOL
+	{
+		# Comment out line
+		$line = "# $line";
+	}
+	$tmpfh->print($line);
+}
+close SUDOERS;
+close $tmpfh;
+
+if ($changed)
+{
+	# If we were successful, replace sudoers
+	copy($tmpf, $sudoersf);
+	unlink($tmpf);
+}
+
+sub gettmpfile
+{
+	my $filename;
+	do {
+		$filename = sprintf "%s/sudoff.%08d", $tmpath, int rand 1e8;
+	} while (-f $filename);
+	return $filename;
+}
+
+sub gettmpfh
+{
+	my ($filename) = @_;
+	local *FH;
+	chmod 0600, $filename;
+	open FH, "> $filename";
+	return *FH{HANDLE};
+}
+
+sub in_array
+{
+	my ($elem, $arr) = @_;
+	for (@$arr)
+	{
+		return 1 if $elem eq $_;
+	}
+	return 0;
+}
+
+exit 0;
